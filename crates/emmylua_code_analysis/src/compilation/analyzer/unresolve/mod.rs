@@ -170,6 +170,9 @@ fn try_resolve(
 
             for mut unresolve in unresolves.drain(..) {
                 let file_id = unresolve.get_file_id().unwrap_or(FileId { id: 0 });
+                let Ok(_scope) = infer_manager.enter_file(file_id) else {
+                    continue;
+                };
                 let cache = infer_manager.get_infer_cache(file_id);
                 let resolve_result = match &mut unresolve {
                     UnResolve::Decl(un_resolve_decl) => {

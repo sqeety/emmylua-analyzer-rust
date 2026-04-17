@@ -12,6 +12,8 @@ use crate::{
     db_index::LuaType,
     semantic::infer::{ConditionFlowAction, VarRefId},
 };
+use crate::semantic::{InferSession, InferSessionRef, InferSessionScope};
+use crate::InferFailReason;
 
 #[derive(Debug)]
 pub enum CacheEntry<T> {
@@ -23,6 +25,7 @@ pub enum CacheEntry<T> {
 pub struct LuaInferCache {
     file_id: FileId,
     config: CacheOptions,
+    infer_session: InferSessionRef,
     pub expr_cache: HashMap<LuaSyntaxId, CacheEntry<LuaType>>,
     pub call_cache:
         HashMap<(LuaSyntaxId, Option<usize>, LuaType), CacheEntry<Arc<LuaFunctionType>>>,
@@ -35,10 +38,19 @@ pub struct LuaInferCache {
 }
 
 impl LuaInferCache {
-    pub fn new(file_id: FileId, config: CacheOptions) -> Self {
+    pub fn new(file_id: FileId, config: CacheOptions, infer_reentry_limit: u32) -> Self {
+        Self::new_with_session(file_id, config, InferSession::new(infer_reentry_limit))
+    }
+
+    pub fn new_with_session(
+        file_id: FileId,
+        config: CacheOptions,
+        infer_session: InferSessionRef,
+    ) -> Self {
         Self {
             file_id,
             config,
+            infer_session,
             expr_cache: HashMap::new(),
             call_cache: HashMap::new(),
             flow_node_cache: HashMap::new(),
@@ -55,6 +67,14 @@ impl LuaInferCache {
 
     pub fn get_file_id(&self) -> FileId {
         self.file_id
+    }
+
+    pub fn get_infer_session(&self) -> &InferSessionRef {
+        &self.infer_session
+    }
+
+    pub fn enter_file_scope(&self, file_id: FileId) -> Result<InferSessionScope, InferFailReason> {
+        self.infer_session.enter(file_id)
     }
 
     pub fn set_phase(&mut self, phase: LuaAnalysisPhase) {

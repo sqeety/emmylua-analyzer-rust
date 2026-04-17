@@ -23,7 +23,7 @@ use type_check_guard::TypeCheckGuard;
 use crate::{
     LuaUnionType,
     db_index::{DbIndex, LuaType},
-    semantic::type_check::type_check_context::TypeCheckContext,
+    semantic::{type_check::type_check_context::TypeCheckContext, with_module_export_type_session},
 };
 pub use sub_type::is_sub_type_of;
 pub type TypeCheckResult = Result<(), TypeCheckFailReason>;
@@ -38,6 +38,22 @@ pub fn check_type_compact(
     check_general_type_compact(&mut context, source, compact_type, TypeCheckGuard::new())
 }
 
+pub(crate) fn check_type_compact_with_session(
+    db: &DbIndex,
+    source: &LuaType,
+    compact_type: &LuaType,
+    infer_session: crate::semantic::InferSessionRef,
+) -> TypeCheckResult {
+    let mut context = TypeCheckContext::new_with_session(
+        db,
+        false,
+        TypeCheckCheckLevel::Normal,
+        infer_session,
+    );
+    check_general_type_compact(&mut context, source, compact_type, TypeCheckGuard::new())
+}
+
+#[allow(dead_code)]
 pub fn check_type_compact_detail(
     db: &DbIndex,
     source: &LuaType,
@@ -45,6 +61,22 @@ pub fn check_type_compact_detail(
 ) -> TypeCheckResult {
     let guard = TypeCheckGuard::new();
     let mut context = TypeCheckContext::new(db, true, TypeCheckCheckLevel::Normal);
+    check_general_type_compact(&mut context, source, compact_type, guard)
+}
+
+pub(crate) fn check_type_compact_detail_with_session(
+    db: &DbIndex,
+    source: &LuaType,
+    compact_type: &LuaType,
+    infer_session: crate::semantic::InferSessionRef,
+) -> TypeCheckResult {
+    let guard = TypeCheckGuard::new();
+    let mut context = TypeCheckContext::new_with_session(
+        db,
+        true,
+        TypeCheckCheckLevel::Normal,
+        infer_session,
+    );
     check_general_type_compact(&mut context, source, compact_type, guard)
 }
 
@@ -72,13 +104,16 @@ fn check_general_type_compact(
         return Ok(());
     }
 
-    if let Some(origin_type) = escape_type(context.db, compact_type) {
-        return check_general_type_compact(
-            context,
-            source,
-            &origin_type,
-            check_guard.next_level()?,
-        );
+    match escape_type(context, compact_type)? {
+        Some(origin_type) => {
+            return check_general_type_compact(
+                context,
+                source,
+                &origin_type,
+                check_guard.next_level()?,
+            );
+        }
+        None => {}
     }
 
     match source {
@@ -210,34 +245,46 @@ fn fast_eq_check(a: &LuaType, b: &LuaType) -> bool {
     }
 }
 
-fn escape_type(db: &DbIndex, typ: &LuaType) -> Option<LuaType> {
+fn escape_type(
+    context: &TypeCheckContext,
+    typ: &LuaType,
+) -> Result<Option<LuaType>, TypeCheckFailReason> {
     match typ {
         LuaType::Ref(type_id) => {
-            let type_decl = db.get_type_index().get_type_decl(type_id)?;
+            let Some(type_decl) = context.db.get_type_index().get_type_decl(type_id) else {
+                return Ok(None);
+            };
             if type_decl.is_alias()
-                && let Some(origin_type) = type_decl.get_alias_origin(db, None)
+                && let Some(origin_type) = type_decl.get_alias_origin(context.db, None)
             {
-                return Some(origin_type.clone());
+                return Ok(Some(origin_type.clone()));
             }
         }
         // todo donot escape
         LuaType::Instance(inst) => {
             let base = inst.get_base();
-            return Some(base.clone());
+            return Ok(Some(base.clone()));
         }
         LuaType::MultiLineUnion(multi_union) => {
             let union = multi_union.to_union();
-            return Some(union);
+            return Ok(Some(union));
         }
-        LuaType::TypeGuard(_) => return Some(LuaType::Boolean),
+        LuaType::TypeGuard(_) => return Ok(Some(LuaType::Boolean)),
         LuaType::ModuleRef(file_id) => {
-            let module_info = db.get_module_index().get_module(*file_id)?;
-            if let Some(export_type) = &module_info.export_type {
-                return Some(export_type.clone());
-            }
+            return with_module_export_type_session(
+                context.db,
+                &context.infer_session,
+                *file_id,
+                |export_type| Ok(export_type.clone()),
+            )
+            .map(Some)
+            .map_err(|reason| match reason {
+                crate::InferFailReason::RecursiveInfer => TypeCheckFailReason::TypeRecursion,
+                _ => TypeCheckFailReason::DonotCheck,
+            });
         }
         _ => {}
     }
 
-    None
+    Ok(None)
 }

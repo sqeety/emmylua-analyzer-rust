@@ -6,7 +6,9 @@ use crate::{
     LuaType, LuaTypeDeclId, LuaUnionType, TypeOps,
     semantic::{
         InferGuard,
+        InferSession, InferSessionRef,
         generic::{TypeSubstitutor, instantiate_type_generic},
+        with_module_export_type_session,
     },
 };
 
@@ -14,39 +16,54 @@ use super::{FindMembersResult, LuaMemberInfo, intersect_member_types};
 use rowan::TextRange;
 
 pub fn find_index_operations(db: &DbIndex, prefix_type: &LuaType) -> FindMembersResult {
-    find_index_operations_guard(db, prefix_type, &InferGuard::new())
+    find_index_operations_with_session(
+        db,
+        prefix_type,
+        InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
+    )
+}
+
+pub fn find_index_operations_with_session(
+    db: &DbIndex,
+    prefix_type: &LuaType,
+    infer_session: InferSessionRef,
+) -> FindMembersResult {
+    find_index_operations_guard(db, prefix_type, &InferGuard::new(), &infer_session)
 }
 
 pub fn find_index_operations_guard(
     db: &DbIndex,
     prefix_type: &LuaType,
     infer_guard: &InferGuardRef,
+    infer_session: &InferSessionRef,
 ) -> FindMembersResult {
     match &prefix_type {
         LuaType::TableConst(in_filed) => find_index_table(db, in_filed),
-        LuaType::Ref(decl_id) => find_index_custom_type(db, decl_id, infer_guard),
-        LuaType::Def(decl_id) => find_index_custom_type(db, decl_id, infer_guard),
+        LuaType::Ref(decl_id) => find_index_custom_type(db, decl_id, infer_guard, infer_session),
+        LuaType::Def(decl_id) => find_index_custom_type(db, decl_id, infer_guard, infer_session),
         LuaType::Array(array_type) => find_index_array(db, array_type.get_base()),
         LuaType::Object(object) => find_index_object(db, object),
-        LuaType::Union(union) => find_index_union(db, union, infer_guard),
+        LuaType::Union(union) => find_index_union(db, union, infer_guard, infer_session),
         LuaType::Intersection(intersection) => {
-            find_index_intersection(db, intersection, infer_guard)
+            find_index_intersection(db, intersection, infer_guard, infer_session)
         }
-        LuaType::Generic(generic) => find_index_generic(db, generic, infer_guard),
+        LuaType::Generic(generic) => find_index_generic(db, generic, infer_guard, infer_session),
         LuaType::TableGeneric(table_generic) => find_index_table_generic(db, table_generic),
         LuaType::Instance(inst) => {
             let base = inst.get_base();
-            find_index_operations_guard(db, base, infer_guard)
+            find_index_operations_guard(db, base, infer_guard, infer_session)
         }
         LuaType::ModuleRef(file_id) => {
-            let module_info = db.get_module_index().get_module(*file_id);
-            if let Some(module_info) = module_info
-                && let Some(export_type) = &module_info.export_type
-            {
-                return find_index_operations_guard(db, export_type, infer_guard);
-            }
-
-            None
+            with_module_export_type_session(db, infer_session, *file_id, |export_type| {
+                Ok(find_index_operations_guard(
+                    db,
+                    export_type,
+                    infer_guard,
+                    infer_session,
+                ))
+            })
+            .ok()
+            .flatten()
         }
         _ => None,
     }
@@ -117,6 +134,7 @@ fn find_index_custom_type(
     db: &DbIndex,
     prefix_type_id: &LuaTypeDeclId,
     infer_guard: &InferGuardRef,
+    infer_session: &InferSessionRef,
 ) -> FindMembersResult {
     infer_guard.check(prefix_type_id).ok()?;
     let type_index = db.get_type_index();
@@ -124,7 +142,7 @@ fn find_index_custom_type(
 
     if type_decl.is_alias() {
         if let Some(origin_type) = type_decl.get_alias_origin(db, None) {
-            return find_index_operations_guard(db, &origin_type, infer_guard);
+            return find_index_operations_guard(db, &origin_type, infer_guard, infer_session);
         }
         return None;
     }
@@ -157,7 +175,9 @@ fn find_index_custom_type(
         && let Some(super_types) = type_index.get_super_types(prefix_type_id)
     {
         for super_type in super_types {
-            if let Some(super_members) = find_index_operations_guard(db, &super_type, infer_guard) {
+            if let Some(super_members) =
+                find_index_operations_guard(db, &super_type, infer_guard, infer_session)
+            {
                 members.extend(super_members);
             }
         }
@@ -226,11 +246,14 @@ fn find_index_union(
     db: &DbIndex,
     union: &LuaUnionType,
     infer_guard: &InferGuardRef,
+    infer_session: &InferSessionRef,
 ) -> FindMembersResult {
     let mut members = Vec::new();
 
     for member in union.into_vec() {
-        if let Some(sub_members) = find_index_operations_guard(db, &member, infer_guard) {
+        if let Some(sub_members) =
+            find_index_operations_guard(db, &member, infer_guard, infer_session)
+        {
             members.extend(sub_members);
         }
     }
@@ -246,12 +269,15 @@ fn find_index_intersection(
     db: &DbIndex,
     intersection: &LuaIntersectionType,
     infer_guard: &InferGuardRef,
+    infer_session: &InferSessionRef,
 ) -> FindMembersResult {
     let mut order: Vec<LuaMemberKey> = Vec::new();
     let mut members: HashMap<LuaMemberKey, LuaType> = HashMap::new();
 
     for member in intersection.get_types() {
-        let Some(sub_members) = find_index_operations_guard(db, member, infer_guard) else {
+        let Some(sub_members) =
+            find_index_operations_guard(db, member, infer_guard, infer_session)
+        else {
             continue;
         };
 
@@ -301,6 +327,7 @@ fn find_index_generic(
     db: &DbIndex,
     generic: &LuaGenericType,
     infer_guard: &InferGuardRef,
+    infer_session: &InferSessionRef,
 ) -> FindMembersResult {
     let base_type = generic.get_base_type();
     let type_decl_id = if let LuaType::Ref(id) = base_type {
@@ -317,7 +344,12 @@ fn find_index_generic(
     if type_decl.is_alias() {
         if let Some(origin_type) = type_decl.get_alias_origin(db, Some(&substitutor)) {
             let instantiated_type = instantiate_type_generic(db, &origin_type, &substitutor);
-            return find_index_operations_guard(db, &instantiated_type, infer_guard);
+            return find_index_operations_guard(
+                db,
+                &instantiated_type,
+                infer_guard,
+                infer_session,
+            );
         }
         return None;
     }
@@ -355,7 +387,7 @@ fn find_index_generic(
         for super_type in supers {
             let instantiated_super = instantiate_type_generic(db, &super_type, &substitutor);
             if let Some(super_members) =
-                find_index_operations_guard(db, &instantiated_super, infer_guard)
+                find_index_operations_guard(db, &instantiated_super, infer_guard, infer_session)
             {
                 members.extend(super_members);
             }

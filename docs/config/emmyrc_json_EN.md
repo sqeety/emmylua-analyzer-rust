@@ -94,7 +94,8 @@ This template is a good starting point for most Lua projects:
   },
   "runtime": {
     "version": "LuaLatest",
-    "requirePattern": ["?.lua", "?/init.lua"]
+    "requirePattern": ["?.lua", "?/init.lua"],
+    "inferReentryLimit": 2
   }
 }
 ```
@@ -177,6 +178,7 @@ This template is a good starting point for most Lua projects:
     "frameworkVersions": [],
     "extensions": [],
     "requirePattern": [],
+    "inferReentryLimit": 2,
     "nonstandardSymbol": [],
     "special": {}
   },
@@ -219,7 +221,7 @@ This template is a good starting point for most Lua projects:
 | `completion` | Completion and auto-require | `autoRequire`, `callSnippet`, `postfix` |
 | `diagnostics` | Diagnostic toggles, allowlists, severity overrides | `disable`, `globals`, `severity` |
 | `doc` | Documentation parsing and rendering | `syntax`, `knownTags`, `privateName` |
-| `runtime` | Lua version, extra syntax, require behavior | `version`, `extensions`, `requirePattern` |
+| `runtime` | Lua version, extra syntax, require behavior | `version`, `extensions`, `requirePattern`, `inferReentryLimit` |
 | `workspace` | Roots, libraries, ignore rules | `library`, `workspaceRoots`, `ignoreGlobs` |
 | `strict` | Stricter typing and visibility rules | `arrayIndex`, `requireExportGlobal` |
 | `format` | External formatter integration | `externalTool`, `externalToolRangeFormat` |
@@ -362,8 +364,11 @@ All remaining built-in rules default to `warning`:
 | `frameworkVersions` | `string[]` | `[]` | Framework version identifiers |
 | `extensions` | `string[]` | `[]` | Additional file extensions treated as Lua |
 | `requirePattern` | `string[]` | `[]` | Module search patterns such as `?.lua` and `?/init.lua` |
+| `inferReentryLimit` | `number` | `2` | Maximum same-file reentry count allowed in one inference session; `0` disables the guard |
 | `nonstandardSymbol` | `string[]` | `[]` | Allowed non-standard syntax symbols |
 | `special` | `object` | `{}` | Special function mappings |
+
+`inferReentryLimit` counts how many times the same file may be re-entered during one inference/query session. The default `2` allows a stack like `A -> B -> A`, and cuts off the next attempt to enter `A` again.
 
 Supported `nonstandardSymbol` values:
 

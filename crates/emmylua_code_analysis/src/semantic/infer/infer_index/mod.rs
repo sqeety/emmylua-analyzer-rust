@@ -194,26 +194,10 @@ pub fn infer_member_by_member_key(
         LuaType::Array(array_type) => infer_array_member(db, cache, array_type, index_expr),
         LuaType::TplRef(tpl) => infer_tpl_ref_member(db, cache, tpl, index_expr, infer_guard),
         LuaType::ModuleRef(file_id) => {
-            let module_info = db.get_module_index().get_module(*file_id);
-            if let Some(module_info) = module_info {
-                if let Some(export_type) = &module_info.export_type {
-                    if export_type.is_module_ref() {
-                        return Err(InferFailReason::RecursiveInfer);
-                    }
-
-                    return infer_member_by_member_key(
-                        db,
-                        cache,
-                        export_type,
-                        index_expr,
-                        infer_guard,
-                    );
-                } else {
-                    return Err(InferFailReason::UnResolveModuleExport(*file_id));
-                }
-            }
-
-            Err(InferFailReason::FieldNotFound)
+            let infer_session = cache.get_infer_session().clone();
+            super::super::with_module_export_type_session(db, &infer_session, *file_id, |export_type| {
+                infer_member_by_member_key(db, cache, export_type, index_expr, infer_guard)
+            })
         }
         _ => Err(InferFailReason::FieldNotFound),
     }
@@ -763,22 +747,10 @@ pub fn infer_member_by_operator(
             infer_member_by_operator(db, cache, base, index_expr, infer_guard)
         }
         LuaType::ModuleRef(file_id) => {
-            let module_info = db.get_module_index().get_module(*file_id);
-            if let Some(module_info) = module_info {
-                if let Some(export_type) = &module_info.export_type {
-                    return infer_member_by_operator(
-                        db,
-                        cache,
-                        export_type,
-                        index_expr,
-                        infer_guard,
-                    );
-                } else {
-                    return Err(InferFailReason::UnResolveModuleExport(*file_id));
-                }
-            }
-
-            Err(InferFailReason::FieldNotFound)
+            let infer_session = cache.get_infer_session().clone();
+            super::super::with_module_export_type_session(db, &infer_session, *file_id, |export_type| {
+                infer_member_by_operator(db, cache, export_type, index_expr, infer_guard)
+            })
         }
         _ => Err(InferFailReason::FieldNotFound),
     }

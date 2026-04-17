@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema, Clone)]
 #[serde(rename_all = "camelCase")]
-#[derive(Default)]
 pub struct EmmyrcRuntime {
     /// Lua version.
     #[serde(default)]
@@ -24,12 +23,30 @@ pub struct EmmyrcRuntime {
     #[serde(default)]
     /// Require pattern. eg. "?.lua", "?/init.lua"
     pub require_pattern: Vec<String>,
+    #[serde(default = "default_infer_reentry_limit")]
+    /// Maximum same-file reentry count allowed during a single inference session. `0` disables the guard.
+    pub infer_reentry_limit: u32,
     /// Non-standard symbols.
     #[serde(default)]
     pub nonstandard_symbol: Vec<EmmyrcNonStdSymbol>,
     /// Special symbols.
     #[serde(default)]
     pub special: HashMap<String, EmmyrcSpecialSymbol>,
+}
+
+impl Default for EmmyrcRuntime {
+    fn default() -> Self {
+        Self {
+            version: Default::default(),
+            require_like_function: Vec::new(),
+            framework_versions: Vec::new(),
+            extensions: Vec::new(),
+            require_pattern: Vec::new(),
+            infer_reentry_limit: default_infer_reentry_limit(),
+            nonstandard_symbol: Vec::new(),
+            special: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
@@ -75,6 +92,10 @@ impl EmmyrcLuaVersion {
 #[allow(unused)]
 fn default_true() -> bool {
     true
+}
+
+fn default_infer_reentry_limit() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -208,5 +229,15 @@ mod tests {
 
         let runtime: EmmyrcRuntime = serde_json::from_str(json2).unwrap();
         assert_eq!(runtime.version, EmmyrcLuaVersion::Lua51);
+        assert_eq!(runtime.infer_reentry_limit, 2);
+    }
+
+    #[test]
+    fn test_emmyrc_runtime_custom_infer_reentry_limit() {
+        let json = r#"{
+            "inferReentryLimit": 3
+        }"#;
+        let runtime: EmmyrcRuntime = serde_json::from_str(json).unwrap();
+        assert_eq!(runtime.infer_reentry_limit, 3);
     }
 }

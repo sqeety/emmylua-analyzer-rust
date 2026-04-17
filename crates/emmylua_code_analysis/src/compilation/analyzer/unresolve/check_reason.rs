@@ -40,6 +40,7 @@ pub fn check_reach_reason(
             Some(member_item.resolve_type(db).is_ok())
         }
         InferFailReason::UnResolveExpr(expr) => {
+            let _scope = infer_manager.enter_file(expr.file_id).ok()?;
             let cache = infer_manager.get_infer_cache(expr.file_id);
             Some(infer_expr(db, cache, expr.value.clone()).is_ok())
         }

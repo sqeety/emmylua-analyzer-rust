@@ -8,7 +8,9 @@ use crate::{
     LuaTypeDeclId, LuaUnionType,
     semantic::{
         InferGuard,
+        InferSession, InferSessionRef,
         generic::{TypeSubstitutor, instantiate_type_generic},
+        with_module_export_type_session,
     },
 };
 
@@ -30,16 +32,44 @@ pub enum FindMemberFilter {
 }
 
 pub fn find_members(db: &DbIndex, prefix_type: &LuaType) -> FindMembersResult {
-    let ctx = FindMembersContext::new(FileId::VIRTUAL, InferGuard::new());
+    find_members_with_session(
+        db,
+        prefix_type,
+        InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
+    )
+}
+
+pub fn find_members_with_session(
+    db: &DbIndex,
+    prefix_type: &LuaType,
+    infer_session: InferSessionRef,
+) -> FindMembersResult {
+    let ctx = FindMembersContext::new(FileId::VIRTUAL, InferGuard::new(), infer_session);
     find_members_guard(db, prefix_type, &ctx, &FindMemberFilter::All)
 }
 
+#[allow(dead_code)]
 pub fn find_members_in_scope(
     db: &DbIndex,
     file_id: FileId,
     prefix_type: &LuaType,
 ) -> FindMembersResult {
-    let ctx = FindMembersContext::new(file_id, InferGuard::new());
+    find_members_in_scope_with_session(
+        db,
+        file_id,
+        prefix_type,
+        InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
+    )
+}
+
+pub fn find_members_in_scope_with_session(
+    db: &DbIndex,
+    file_id: FileId,
+    prefix_type: &LuaType,
+    infer_session: InferSessionRef,
+) -> FindMembersResult {
+    let _scope = infer_session.enter(file_id).ok()?;
+    let ctx = FindMembersContext::new(file_id, InferGuard::new(), infer_session);
     find_members_guard(db, prefix_type, &ctx, &FindMemberFilter::All)
 }
 
@@ -49,7 +79,23 @@ pub fn find_members_with_key(
     member_key: LuaMemberKey,
     find_all: bool,
 ) -> FindMembersResult {
-    let ctx = FindMembersContext::new(FileId::VIRTUAL, InferGuard::new());
+    find_members_with_key_with_session(
+        db,
+        prefix_type,
+        member_key,
+        find_all,
+        InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
+    )
+}
+
+pub fn find_members_with_key_with_session(
+    db: &DbIndex,
+    prefix_type: &LuaType,
+    member_key: LuaMemberKey,
+    find_all: bool,
+    infer_session: InferSessionRef,
+) -> FindMembersResult {
+    let ctx = FindMembersContext::new(FileId::VIRTUAL, InferGuard::new(), infer_session);
     find_members_guard(
         db,
         prefix_type,
@@ -61,6 +107,7 @@ pub fn find_members_with_key(
     )
 }
 
+#[allow(dead_code)]
 pub fn find_members_with_key_in_scope(
     db: &DbIndex,
     file_id: FileId,
@@ -68,7 +115,26 @@ pub fn find_members_with_key_in_scope(
     member_key: LuaMemberKey,
     find_all: bool,
 ) -> FindMembersResult {
-    let ctx = FindMembersContext::new(file_id, InferGuard::new());
+    find_members_with_key_in_scope_with_session(
+        db,
+        file_id,
+        prefix_type,
+        member_key,
+        find_all,
+        InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
+    )
+}
+
+pub fn find_members_with_key_in_scope_with_session(
+    db: &DbIndex,
+    file_id: FileId,
+    prefix_type: &LuaType,
+    member_key: LuaMemberKey,
+    find_all: bool,
+    infer_session: InferSessionRef,
+) -> FindMembersResult {
+    let _scope = infer_session.enter(file_id).ok()?;
+    let ctx = FindMembersContext::new(file_id, InferGuard::new(), infer_session);
     find_members_guard(
         db,
         prefix_type,
@@ -84,14 +150,16 @@ pub fn find_members_with_key_in_scope(
 struct FindMembersContext {
     file_id: FileId,
     infer_guard: InferGuardRef,
+    infer_session: InferSessionRef,
     substitutor: Option<TypeSubstitutor>,
 }
 
 impl FindMembersContext {
-    fn new(file_id: FileId, infer_guard: InferGuardRef) -> Self {
+    fn new(file_id: FileId, infer_guard: InferGuardRef, infer_session: InferSessionRef) -> Self {
         Self {
             file_id,
             infer_guard,
+            infer_session,
             substitutor: None,
         }
     }
@@ -99,6 +167,7 @@ impl FindMembersContext {
         Self {
             file_id: self.file_id,
             infer_guard: self.infer_guard.clone(),
+            infer_session: self.infer_session.clone(),
             substitutor: Some(substitutor),
         }
     }
@@ -107,6 +176,7 @@ impl FindMembersContext {
         Self {
             file_id: self.file_id,
             infer_guard: self.infer_guard.fork(),
+            infer_session: self.infer_session.clone(),
             substitutor: self.substitutor.clone(),
         }
     }
@@ -121,6 +191,10 @@ impl FindMembersContext {
 
     fn infer_guard(&self) -> &InferGuardRef {
         &self.infer_guard
+    }
+
+    fn infer_session(&self) -> &InferSessionRef {
+        &self.infer_session
     }
 
     fn file_id(&self) -> FileId {
@@ -171,14 +245,11 @@ fn find_members_guard(
         LuaType::Instance(inst) => find_instance_members(db, inst, ctx, filter),
         LuaType::Namespace(ns) => find_namespace_members(db, ctx, ns, filter),
         LuaType::ModuleRef(file_id) => {
-            let module_info = db.get_module_index().get_module(*file_id);
-            if let Some(module_info) = module_info
-                && let Some(export_type) = &module_info.export_type
-            {
-                return find_members_guard(db, export_type, ctx, filter);
-            }
-
-            None
+            with_module_export_type_session(db, ctx.infer_session(), *file_id, |export_type| {
+                Ok(find_members_guard(db, export_type, ctx, filter))
+            })
+            .ok()
+            .flatten()
         }
         _ => None,
     }

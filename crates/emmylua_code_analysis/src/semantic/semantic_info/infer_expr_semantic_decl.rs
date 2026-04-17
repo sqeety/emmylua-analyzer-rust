@@ -9,7 +9,7 @@ use crate::{
     LuaTypeDeclId, LuaUnionType, TypeOps,
     semantic::{
         infer::find_self_decl_or_member_id, member::get_buildin_type_map_type_id,
-        semantic_info::resolve_global_decl_id,
+        semantic_info::resolve_global_decl_id, with_module_export_type_session,
     },
 };
 
@@ -305,18 +305,19 @@ fn infer_member_semantic_decl_by_member_key(
         ),
         LuaType::Global => infer_global_member_semantic_decl_by_member_key(db, cache, member_key),
         LuaType::ModuleRef(file_id) => {
-            let module_info = db.get_module_index().get_module(*file_id)?;
-            if let Some(export_type) = &module_info.export_type {
-                infer_member_semantic_decl_by_member_key(
+            let infer_session = cache.get_infer_session().clone();
+            let next_guard = semantic_guard.next_level()?;
+            with_module_export_type_session(db, &infer_session, *file_id, |export_type| {
+                Ok(infer_member_semantic_decl_by_member_key(
                     db,
                     cache,
                     export_type,
                     member_key,
-                    semantic_guard.next_level()?,
-                )
-            } else {
-                None
-            }
+                    next_guard,
+                ))
+            })
+            .ok()
+            .flatten()
         }
         LuaType::Intersection(intersection_type) => infer_intersection_member_semantic_info(
             db,

@@ -3,7 +3,9 @@ mod decl;
 mod generic;
 mod guard;
 mod infer;
+mod infer_session;
 mod member;
+mod module_ref;
 mod overload_resolve;
 mod reference;
 mod semantic_info;
@@ -25,11 +27,11 @@ use infer::{infer_bind_value_type, infer_expr_list_types};
 pub use infer::{infer_table_field_value_should_be, infer_table_should_be};
 use lsp_types::Uri;
 pub use member::LuaMemberInfo;
-pub use member::find_index_operations;
+pub use member::{find_index_operations, find_index_operations_with_session};
 pub use member::get_member_map;
 use member::{
-    find_member_origin_owner, find_members_in_scope, find_members_with_key_in_scope,
-    get_member_map_in_scope,
+    find_member_origin_owner, find_members_in_scope_with_session,
+    find_members_with_key_in_scope_with_session, get_member_map_in_scope_with_session,
 };
 use reference::is_reference_to;
 use rowan::{NodeOrToken, TextRange};
@@ -38,13 +40,14 @@ pub(crate) use semantic_info::{infer_node_semantic_decl, resolve_global_decl_id}
 use semantic_info::{
     infer_node_semantic_info, infer_token_semantic_decl, infer_token_semantic_info,
 };
-pub(crate) use type_check::check_type_compact;
+pub(crate) use type_check::{
+    check_type_compact, check_type_compact_detail_with_session, check_type_compact_with_session,
+};
 use type_check::is_sub_type_of;
 pub use visibility::check_module_visibility;
 use visibility::check_visibility;
 
-pub use crate::semantic::member::find_members_with_key;
-use crate::semantic::type_check::check_type_compact_detail;
+pub use crate::semantic::member::{find_members_with_key, find_members_with_key_with_session};
 use crate::{Emmyrc, LuaDocument, LuaSemanticDeclId, ModuleInfo, db_index::LuaTypeDeclId};
 use crate::{
     FileId,
@@ -55,8 +58,10 @@ pub use generic::*;
 pub use guard::{InferGuard, InferGuardRef};
 pub use infer::InferFailReason;
 pub use infer::infer_call_expr_func;
+pub(crate) use infer_session::{InferSession, InferSessionRef, InferSessionScope};
 pub(crate) use infer::infer_expr;
 pub use infer::infer_param;
+pub(crate) use module_ref::{with_module_export_type, with_module_export_type_session};
 use overload_resolve::resolve_signature;
 pub use semantic_info::SemanticDeclLevel;
 pub use type_check::{TypeCheckFailReason, TypeCheckResult};
@@ -127,15 +132,22 @@ impl<'a> SemanticModel<'a> {
     }
 
     pub fn infer_expr(&self, expr: LuaExpr) -> Result<LuaType, InferFailReason> {
+        let _scope = self.enter_infer_root_scope()?;
         infer_expr(self.db, &mut self.infer_cache.borrow_mut(), expr)
     }
 
     pub fn infer_table_should_be(&self, table: LuaTableExpr) -> Option<LuaType> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         infer_table_should_be(self.db, &mut self.infer_cache.borrow_mut(), table).ok()
     }
 
     pub fn get_member_infos(&self, prefix_type: &LuaType) -> Option<Vec<LuaMemberInfo>> {
-        find_members_in_scope(self.db, self.file_id, prefix_type)
+        find_members_in_scope_with_session(
+            self.db,
+            self.file_id,
+            prefix_type,
+            self.get_infer_session(),
+        )
     }
 
     pub fn get_member_info_with_key(
@@ -144,22 +156,50 @@ impl<'a> SemanticModel<'a> {
         member_key: LuaMemberKey,
         find_all: bool,
     ) -> Option<Vec<LuaMemberInfo>> {
-        find_members_with_key_in_scope(self.db, self.file_id, prefix_type, member_key, find_all)
+        find_members_with_key_in_scope_with_session(
+            self.db,
+            self.file_id,
+            prefix_type,
+            member_key,
+            find_all,
+            self.get_infer_session(),
+        )
     }
 
     pub fn get_member_info_map(
         &self,
         prefix_type: &LuaType,
     ) -> Option<HashMap<LuaMemberKey, Vec<LuaMemberInfo>>> {
-        get_member_map_in_scope(self.db, self.file_id, prefix_type)
+        get_member_map_in_scope_with_session(
+            self.db,
+            self.file_id,
+            prefix_type,
+            self.get_infer_session(),
+        )
     }
 
     pub fn type_check(&self, source: &LuaType, compact_type: &LuaType) -> TypeCheckResult {
-        check_type_compact(self.db, source, compact_type)
+        let _scope = self
+            .enter_infer_root_scope()
+            .map_err(|_| TypeCheckFailReason::TypeRecursion)?;
+        check_type_compact_with_session(
+            self.db,
+            source,
+            compact_type,
+            self.get_infer_session(),
+        )
     }
 
     pub fn type_check_detail(&self, source: &LuaType, compact_type: &LuaType) -> TypeCheckResult {
-        check_type_compact_detail(self.db, source, compact_type)
+        let _scope = self
+            .enter_infer_root_scope()
+            .map_err(|_| TypeCheckFailReason::TypeRecursion)?;
+        check_type_compact_detail_with_session(
+            self.db,
+            source,
+            compact_type,
+            self.get_infer_session(),
+        )
     }
 
     pub fn infer_call_expr_func(
@@ -167,6 +207,7 @@ impl<'a> SemanticModel<'a> {
         call_expr: LuaCallExpr,
         arg_count: Option<usize>,
     ) -> Option<Arc<LuaFunctionType>> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         let prefix_expr = call_expr.get_prefix_expr()?;
         let call_expr_type =
             infer_expr(self.db, &mut self.infer_cache.borrow_mut(), prefix_expr).ok()?;
@@ -187,6 +228,9 @@ impl<'a> SemanticModel<'a> {
         exprs: &[LuaExpr],
         var_count: Option<usize>,
     ) -> Vec<(LuaType, TextRange)> {
+        let Some(_scope) = self.enter_infer_root_scope().ok() else {
+            return Vec::new();
+        };
         let cache = &mut self.infer_cache.borrow_mut();
         infer_expr_list_types(self.db, cache, exprs, var_count, |db, cache, expr| {
             Ok(infer_expr(db, cache, expr).unwrap_or(LuaType::Unknown))
@@ -196,6 +240,7 @@ impl<'a> SemanticModel<'a> {
 
     /// 推断值已经绑定的类型(不是推断值的类型). 例如从右值推断左值类型, 从调用参数推断函数参数类型
     pub fn infer_bind_value_type(&self, expr: LuaExpr) -> Option<LuaType> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         infer_bind_value_type(self.db, &mut self.infer_cache.borrow_mut(), expr)
     }
 
@@ -203,6 +248,7 @@ impl<'a> SemanticModel<'a> {
         &self,
         node_or_token: NodeOrToken<LuaSyntaxNode, LuaSyntaxToken>,
     ) -> Option<SemanticInfo> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         match node_or_token {
             NodeOrToken::Node(node) => {
                 infer_node_semantic_info(self.db, &mut self.infer_cache.borrow_mut(), node)
@@ -218,6 +264,7 @@ impl<'a> SemanticModel<'a> {
         node_or_token: NodeOrToken<LuaSyntaxNode, LuaSyntaxToken>,
         level: SemanticDeclLevel,
     ) -> Option<LuaSemanticDeclId> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         match node_or_token {
             NodeOrToken::Node(node) => {
                 infer_node_semantic_decl(self.db, &mut self.infer_cache.borrow_mut(), node, level)
@@ -234,6 +281,9 @@ impl<'a> SemanticModel<'a> {
         semantic_decl_id: LuaSemanticDeclId,
         level: SemanticDeclLevel,
     ) -> bool {
+        let Some(_scope) = self.enter_infer_root_scope().ok() else {
+            return false;
+        };
         is_reference_to(
             self.db,
             &mut self.infer_cache.borrow_mut(),
@@ -249,6 +299,9 @@ impl<'a> SemanticModel<'a> {
         token: LuaSyntaxToken,
         property_owner: LuaSemanticDeclId,
     ) -> bool {
+        let Some(_scope) = self.enter_infer_root_scope().ok() else {
+            return true;
+        };
         check_visibility(
             self.db,
             self.file_id,
@@ -302,6 +355,7 @@ impl<'a> SemanticModel<'a> {
     }
 
     pub fn get_member_key(&self, index_key: &LuaIndexKey) -> Option<LuaMemberKey> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         LuaMemberKey::from_index_key(self.db, &mut self.infer_cache.borrow_mut(), index_key).ok()
     }
 
@@ -314,11 +368,22 @@ impl<'a> SemanticModel<'a> {
     }
 
     pub fn get_member_origin_owner(&self, member_id: LuaMemberId) -> Option<LuaSemanticDeclId> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         find_member_origin_owner(self.db, &mut self.infer_cache.borrow_mut(), member_id)
     }
 
     pub fn get_index_decl_type(&self, index_expr: LuaIndexExpr) -> Option<LuaType> {
+        let _scope = self.enter_infer_root_scope().ok()?;
         let cache = &mut self.infer_cache.borrow_mut();
         infer_index_expr(self.db, cache, index_expr, false).ok()
+    }
+
+    fn enter_infer_root_scope(&self) -> Result<InferSessionScope, InferFailReason> {
+        let cache = self.infer_cache.borrow();
+        cache.enter_file_scope(self.file_id)
+    }
+
+    fn get_infer_session(&self) -> InferSessionRef {
+        self.infer_cache.borrow().get_infer_session().clone()
     }
 }

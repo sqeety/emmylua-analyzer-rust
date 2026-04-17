@@ -7,7 +7,7 @@ use crate::{
     AsyncState, DbIndex, LuaAliasCallType, LuaConditionalType, LuaFunctionType, LuaGenericType,
     LuaIntersectionType, LuaMemberKey, LuaMemberOwner, LuaObjectType, LuaSignatureId,
     LuaStringTplType, LuaTupleType, LuaType, LuaTypeDeclId, LuaUnionType, TypeSubstitutor,
-    VariadicType,
+    VariadicType, semantic::InferSession,
 };
 
 use super::{LuaAliasCallKind, LuaMultiLineUnion};
@@ -84,6 +84,7 @@ pub struct TypeHumanizer<'a> {
     level: RenderLevel,
     depth: u8,
     max_depth: u8,
+    infer_session: crate::semantic::InferSessionRef,
     /// Tracks visited `LuaTypeDeclId`s to break cycles from recursive aliases / refs.
     visited: HashSet<LuaTypeDeclId>,
 }
@@ -95,6 +96,7 @@ impl<'a> TypeHumanizer<'a> {
             level,
             depth: 0,
             max_depth: DEFAULT_MAX_DEPTH,
+            infer_session: InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
             visited: HashSet::new(),
         }
     }
@@ -1009,16 +1011,14 @@ impl<'a> TypeHumanizer<'a> {
     // ─── ModuleRef ──────────────────────────────────────────────────
 
     fn write_module_ref<W: Write>(&mut self, file_id: crate::FileId, w: &mut W) -> fmt::Result {
-        if let Some(module_info) = self.db.get_module_index().get_module(file_id) {
-            if let Some(export_type) = &module_info.export_type {
-                if export_type.is_module_ref() {
-                    return w.write_str("module 'recursive'");
-                }
-                let export_type = export_type.clone();
-                self.write_type(&export_type, w)
-            } else {
-                w.write_str("module 'unknown'")
-            }
+        let Ok(_scope) = self.infer_session.enter(file_id) else {
+            return w.write_str("module 'recursive'");
+        };
+        if let Some(module_info) = self.db.get_module_index().get_module(file_id)
+            && let Some(export_type) = &module_info.export_type
+        {
+            let export_type = export_type.clone();
+            self.write_type(&export_type, w)
         } else {
             w.write_str("module 'unknown'")
         }

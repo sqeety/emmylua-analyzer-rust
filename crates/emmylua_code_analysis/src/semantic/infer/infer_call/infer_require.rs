@@ -1,8 +1,9 @@
 use emmylua_parser::LuaCallExpr;
 
 use crate::{
-    DbIndex, InFiled, InferFailReason, LuaInferCache, LuaType, infer_expr,
+    DbIndex, InferFailReason, LuaInferCache, LuaType, infer_expr,
     semantic::infer::InferResult,
+    semantic::with_module_export_type,
 };
 
 pub fn infer_require_call(
@@ -24,14 +25,10 @@ pub fn infer_require_call(
         .get_module_index()
         .find_module(&module_path)
         .ok_or(InferFailReason::None)?;
-    match &module_info.export_type {
-        Some(ty) => match ty {
+    with_module_export_type(db, cache, module_info.file_id, |ty| {
+        Ok(match ty {
             LuaType::Def(id) => Ok(LuaType::Ref(id.clone())),
             _ => Ok(ty.clone()),
-        },
-        None => Err(InferFailReason::UnResolveExpr(InFiled::new(
-            cache.get_file_id(),
-            call_expr.into(),
-        ))),
-    }
+        }?)
+    })
 }

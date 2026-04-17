@@ -16,8 +16,7 @@ use crate::{
         unresolve::UnResolveConstructor,
     },
     db_index::{DbIndex, LuaMemberOwner, LuaType},
-    find_members_with_key,
-    semantic::{LuaInferCache, infer_expr},
+    semantic::{LuaInferCache, find_members_with_key_with_session, infer_expr},
 };
 
 use super::{
@@ -333,8 +332,14 @@ pub fn try_resolve_constructor(
     // 添加构造函数
     let target_type = LuaType::Ref(target_id);
     let member_key = LuaMemberKey::Name(target_signature_name);
-    let members =
-        find_members_with_key(db, &target_type, member_key, false).ok_or(InferFailReason::None)?;
+    let members = find_members_with_key_with_session(
+        db,
+        &target_type,
+        member_key,
+        false,
+        cache.get_infer_session().clone(),
+    )
+    .ok_or(InferFailReason::None)?;
     let ctor_signature_member = members.first().ok_or(InferFailReason::None)?;
 
     set_signature_to_default_call(db, cache, ctor_signature_member, strip_self, return_self)

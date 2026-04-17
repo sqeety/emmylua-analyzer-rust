@@ -112,6 +112,7 @@
       "default": {
         "extensions": [],
         "frameworkVersions": [],
+        "inferReentryLimit": 2,
         "nonstandardSymbol": [],
         "requireLikeFunction": [],
         "requirePattern": [],
@@ -968,6 +969,13 @@
           "items": {
             "type": "string"
           }
+        },
+        "inferReentryLimit": {
+          "description": "Maximum same-file reentry count allowed during a single inference session. `0` disables the guard.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
         },
         "nonstandardSymbol": {
           "description": "Non-standard symbols.",

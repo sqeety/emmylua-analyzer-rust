@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{DbIndex, LuaMemberKey};
+use crate::semantic::{InferSession, InferSessionRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeCheckCheckLevel {
@@ -13,15 +14,31 @@ pub struct TypeCheckContext<'db> {
     pub detail: bool,
     pub db: &'db DbIndex,
     pub level: TypeCheckCheckLevel,
+    pub infer_session: InferSessionRef,
     pub table_member_checked: Option<HashSet<LuaMemberKey>>,
 }
 
 impl<'db> TypeCheckContext<'db> {
     pub fn new(db: &'db DbIndex, detail: bool, level: TypeCheckCheckLevel) -> Self {
+        Self::new_with_session(
+            db,
+            detail,
+            level,
+            InferSession::new(db.get_emmyrc().runtime.infer_reentry_limit),
+        )
+    }
+
+    pub fn new_with_session(
+        db: &'db DbIndex,
+        detail: bool,
+        level: TypeCheckCheckLevel,
+        infer_session: InferSessionRef,
+    ) -> Self {
         Self {
             detail,
             db,
             level,
+            infer_session,
             table_member_checked: None,
         }
     }

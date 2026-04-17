@@ -145,12 +145,13 @@ pub struct AnalyzeContext {
 
 impl AnalyzeContext {
     pub fn new(emmyrc: Arc<Emmyrc>) -> Self {
+        let infer_reentry_limit = emmyrc.runtime.infer_reentry_limit;
         Self {
             tree_list: Vec::new(),
             config: emmyrc,
             metas: HashSet::new(),
             unresolves: Vec::new(),
-            infer_manager: InferCacheManager::new(),
+            infer_manager: InferCacheManager::new(infer_reentry_limit),
             workspace_id: None,
         }
     }

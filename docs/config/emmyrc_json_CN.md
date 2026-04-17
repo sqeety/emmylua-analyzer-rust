@@ -94,7 +94,8 @@ EmmyLua Analyzer Rust 推荐把配置写在项目根目录的 `.emmyrc.json` 中
   },
   "runtime": {
     "version": "LuaLatest",
-    "requirePattern": ["?.lua", "?/init.lua"]
+    "requirePattern": ["?.lua", "?/init.lua"],
+    "inferReentryLimit": 2
   }
 }
 ```
@@ -177,6 +178,7 @@ EmmyLua Analyzer Rust 推荐把配置写在项目根目录的 `.emmyrc.json` 中
     "frameworkVersions": [],
     "extensions": [],
     "requirePattern": [],
+    "inferReentryLimit": 2,
     "nonstandardSymbol": [],
     "special": {}
   },
@@ -219,7 +221,7 @@ EmmyLua Analyzer Rust 推荐把配置写在项目根目录的 `.emmyrc.json` 中
 | `completion` | 补全与自动 require | `autoRequire`、`callSnippet`、`postfix` |
 | `diagnostics` | 诊断开关、白名单、级别覆盖 | `disable`、`globals`、`severity` |
 | `doc` | 文档注释解析与渲染 | `syntax`、`knownTags`、`privateName` |
-| `runtime` | Lua 版本、扩展语法与 require 规则 | `version`、`extensions`、`requirePattern` |
+| `runtime` | Lua 版本、扩展语法与 require 规则 | `version`、`extensions`、`requirePattern`、`inferReentryLimit` |
 | `workspace` | 工作区目录、库目录、忽略规则 | `library`、`workspaceRoots`、`ignoreGlobs` |
 | `strict` | 更严格的类型和可见性约束 | `arrayIndex`、`requireExportGlobal` |
 | `format` | 外部格式化工具对接 | `externalTool`、`externalToolRangeFormat` |
@@ -362,8 +364,11 @@ EmmyLua Analyzer Rust 推荐把配置写在项目根目录的 `.emmyrc.json` 中
 | `frameworkVersions` | `string[]` | `[]` | 框架版本标识 |
 | `extensions` | `string[]` | `[]` | 额外识别的 Lua 文件扩展名 |
 | `requirePattern` | `string[]` | `[]` | require 搜索模式，例如 `?.lua`、`?/init.lua` |
+| `inferReentryLimit` | `number` | `2` | 单次推导会话里允许同一文件重入的最大次数；`0` 表示关闭该保护 |
 | `nonstandardSymbol` | `string[]` | `[]` | 允许的非标准语法符号 |
 | `special` | `object` | `{}` | 特殊函数映射 |
+
+`inferReentryLimit` 统计的是一次推导/查询会话里“进入同一文件”的次数。默认值 `2` 允许 `A -> B -> A`，再次尝试进入 `A` 时会直接截断该分支。
 
 `nonstandardSymbol` 支持的值：
 

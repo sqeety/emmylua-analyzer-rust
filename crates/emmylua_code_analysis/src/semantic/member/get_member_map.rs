@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{DbIndex, FileId, LuaMemberKey, LuaType};
+use crate::semantic::InferSessionRef;
 
 use super::{
     LuaMemberInfo,
@@ -15,12 +16,24 @@ pub fn get_member_map(
     build_member_map(members)
 }
 
+#[allow(dead_code)]
 pub fn get_member_map_in_scope(
     db: &DbIndex,
     file_id: FileId,
     prefix_type: &LuaType,
 ) -> Option<HashMap<LuaMemberKey, Vec<LuaMemberInfo>>> {
     let members = find_members::find_members_in_scope(db, file_id, prefix_type)?;
+    build_member_map(members)
+}
+
+pub fn get_member_map_in_scope_with_session(
+    db: &DbIndex,
+    file_id: FileId,
+    prefix_type: &LuaType,
+    infer_session: InferSessionRef,
+) -> Option<HashMap<LuaMemberKey, Vec<LuaMemberInfo>>> {
+    let members =
+        find_members::find_members_in_scope_with_session(db, file_id, prefix_type, infer_session)?;
     build_member_map(members)
 }
 

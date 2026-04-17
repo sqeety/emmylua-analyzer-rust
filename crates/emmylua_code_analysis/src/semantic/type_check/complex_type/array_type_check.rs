@@ -1,10 +1,10 @@
 use crate::{
     LuaMemberKey, LuaMemberOwner, LuaType, TypeCheckFailReason, TypeCheckResult, TypeOps,
-    find_index_operations,
     semantic::type_check::{
         check_general_type_compact, type_check_context::TypeCheckContext,
         type_check_guard::TypeCheckGuard,
     },
+    semantic::find_index_operations_with_session,
 };
 
 pub fn check_array_type_compact(
@@ -96,7 +96,9 @@ fn check_array_type_compact_ref_def(
     compact_type: &LuaType,
     check_guard: TypeCheckGuard,
 ) -> TypeCheckResult {
-    let Some(members) = find_index_operations(context.db, compact_type) else {
+    let Some(members) =
+        find_index_operations_with_session(context.db, compact_type, context.infer_session.clone())
+    else {
         return Err(TypeCheckFailReason::TypeNotMatch);
     };
 

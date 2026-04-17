@@ -10,11 +10,15 @@ use crate::{
     db_index::{LuaType, LuaTypeDeclId},
 };
 use emmylua_parser::{LuaAssignStat, LuaAstNode, LuaSyntaxKind, LuaTableExpr, LuaTableField};
-pub use find_index::find_index_operations;
+pub use find_index::{find_index_operations, find_index_operations_with_session};
+#[allow(unused_imports)]
 pub use find_members::{
-    find_members, find_members_in_scope, find_members_with_key, find_members_with_key_in_scope,
+    find_members, find_members_in_scope, find_members_in_scope_with_session, find_members_with_key,
+    find_members_with_key_in_scope, find_members_with_key_in_scope_with_session,
+    find_members_with_key_with_session, find_members_with_session,
 };
-pub use get_member_map::{get_member_map, get_member_map_in_scope};
+#[allow(unused_imports)]
+pub use get_member_map::{get_member_map, get_member_map_in_scope, get_member_map_in_scope_with_session};
 pub use infer_raw_member::infer_raw_member_type;
 
 use super::{
@@ -150,7 +154,13 @@ fn resolve_table_field_through_type_inference(
 
     let field_key = table_field.get_field_key()?;
     let key = LuaMemberKey::from_index_key(db, infer_config, &field_key).ok()?;
-    let member_infos = find_members_with_key(db, &table_type, key, false)?;
+    let member_infos = find_members::find_members_with_key_with_session(
+        db,
+        &table_type,
+        key,
+        false,
+        infer_config.get_infer_session().clone(),
+    )?;
 
     member_infos
         .first()

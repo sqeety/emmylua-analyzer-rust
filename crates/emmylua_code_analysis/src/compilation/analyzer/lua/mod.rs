@@ -48,6 +48,9 @@ impl AnalysisPipeline for LuaAnalysisPipeline {
         let order = file_dependency.get_best_analysis_order(&file_ids, &context.metas);
         for file_id in order {
             if let Some(root) = tree_map.get(&file_id) {
+                let Ok(_scope) = context.infer_manager.enter_file(file_id) else {
+                    continue;
+                };
                 let mut analyzer = LuaAnalyzer::new(db, file_id, context);
                 for node in root.descendants::<LuaAst>() {
                     analyze_node(&mut analyzer, node);
