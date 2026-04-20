@@ -1,6 +1,6 @@
 mod best_log_path;
 
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::Path, path::PathBuf};
 
 use best_log_path::get_best_log_dir;
 use chrono::Local;
@@ -39,11 +39,7 @@ pub fn init_logger(root: Option<&str>, cmd_args: &CmdArgs) {
             .join("_")
     };
 
-    let log_dir = if cmd_log_path.is_empty() {
-        get_best_log_dir()
-    } else {
-        PathBuf::from(cmd_log_path.as_str())
-    };
+    let log_dir = resolve_log_dir(&cmd_log_path);
     if !log_dir.exists() {
         match fs::create_dir_all(&log_dir) {
             Ok(_) => {}
@@ -91,9 +87,31 @@ pub fn init_logger(root: Option<&str>, cmd_args: &CmdArgs) {
         return;
     }
 
-    let uri = file_path_to_uri(&log_file_path).unwrap();
-    eprintln!("init logger success with file: {}", uri.as_str());
+    if let Some(uri) = file_path_to_uri(&log_file_path) {
+        eprintln!("init logger success with file: {}", uri.as_str());
+    } else {
+        eprintln!(
+            "init logger success with file: {}",
+            log_file_path.display()
+        );
+    }
     info!("{} v{}", CRATE_NAME, CRATE_VERSION);
+}
+
+fn resolve_log_dir(cmd_log_path: &str) -> PathBuf {
+    if cmd_log_path.is_empty() {
+        return get_best_log_dir();
+    }
+
+    let log_dir = Path::new(cmd_log_path);
+    if log_dir.is_absolute() {
+        return log_dir.to_path_buf();
+    }
+
+    match env::current_dir() {
+        Ok(current_dir) => current_dir.join(log_dir),
+        Err(_) => log_dir.to_path_buf(),
+    }
 }
 
 fn init_stderr_logger(level: LevelFilter) {
@@ -118,4 +136,33 @@ fn init_stderr_logger(level: LevelFilter) {
     }
 
     info!("{} v{}", CRATE_NAME, CRATE_VERSION);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_log_dir;
+    use emmylua_code_analysis::file_path_to_uri;
+    use std::path::Path;
+
+    #[test]
+    fn resolve_relative_log_dir_to_absolute_path() {
+        let log_dir = resolve_log_dir("./logs");
+
+        assert!(log_dir.is_absolute());
+        assert!(log_dir.ends_with(Path::new("logs")));
+        assert!(file_path_to_uri(&log_dir).is_some());
+    }
+
+    #[test]
+    fn keep_absolute_log_dir_unchanged() {
+        #[cfg(windows)]
+        let log_dir = resolve_log_dir("C:/temp/emmylua-logs");
+        #[cfg(not(windows))]
+        let log_dir = resolve_log_dir("/tmp/emmylua-logs");
+
+        #[cfg(windows)]
+        assert_eq!(log_dir, Path::new("C:/temp/emmylua-logs"));
+        #[cfg(not(windows))]
+        assert_eq!(log_dir, Path::new("/tmp/emmylua-logs"));
+    }
 }
